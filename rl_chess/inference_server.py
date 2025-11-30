@@ -115,11 +115,22 @@ class InferenceServer(multiprocessing.Process):
         print(">>> _run_server: model created", file=sys.stderr, flush=True)
         model.eval()
         
-        # ПРОПУСКАЕМ синхронизацию весов при старте - shared memory зависает на Colab
-        # Веса синхронизируются позже в основном цикле
-        logging.info("Используются начальные веса модели (синхронизация позже)")
+        # Синхронизация весов через файл (shared memory зависает на Colab)
+        import os
+        weights_file = "inference_weights.pth"
+        if os.path.exists(weights_file):
+            model.load_state_dict(torch.load(weights_file, map_location=device))
+            logging.info(f"Веса загружены из {weights_file}")
+        elif os.path.exists(config.MODEL_PATH):
+            model.load_state_dict(torch.load(config.MODEL_PATH, map_location=device))
+            logging.info(f"Веса загружены из {config.MODEL_PATH}")
+        else:
+            logging.info("Используются случайные веса (файл весов не найден)")
         
         print(">>> _run_server: entering main loop", file=sys.stderr, flush=True)
+        
+        last_sync_time = time.time()
+        SYNC_INTERVAL = 10.0  # Синхронизировать веса каждые 10 секунд
 
         # Подготовка к AMP (Mixed Precision) - только для CUDA
         use_amp = (device_type == 'cuda')
@@ -214,4 +225,12 @@ class InferenceServer(multiprocessing.Process):
                 self.output_queues[worker_id].put((worker_policy, worker_value))
             
             requests_buffer.clear()
-            # Синхронизация весов отключена - зависает на Colab с multiprocessing
+            
+            # Периодическая синхронизация весов через файл
+            if time.time() - last_sync_time > SYNC_INTERVAL:
+                if os.path.exists(weights_file):
+                    try:
+                        model.load_state_dict(torch.load(weights_file, map_location=device))
+                    except Exception:
+                        pass  # Файл может быть в процессе записи
+                last_sync_time = time.time()

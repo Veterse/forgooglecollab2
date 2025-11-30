@@ -104,6 +104,13 @@ class TrainingWorker(multiprocessing.Process):
             # Обновляем счётчик после успешного обучения
             last_trained_buffer_size = current_buffer_size
             
+            # Сохраняем веса для InferenceServer каждые 5 шагов
+            if self.training_step_counter.value % 5 == 0:
+                try:
+                    torch.save(self.model.state_dict(), "inference_weights.pth")
+                except Exception:
+                    pass
+            
             if self.training_step_counter.value % config.SAVE_CHECKPOINT_EVERY_N_STEPS == 0:
                 self._save_checkpoint()
 
