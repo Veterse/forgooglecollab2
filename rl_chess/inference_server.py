@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Модуль Inference Server.
-Обеспечивает централизованное выполнение предсказаний нейросети на GPU.
-Собирает запросы от множества воркеров в батчи (Batching) для максимальной утилизации GPU.
+Обеспечивает централизованное выполнение предсказаний нейросети на GPU/TPU.
+Собирает запросы от множества воркеров в батчи (Batching) для максимальной утилизации.
 """
 import multiprocessing
 import torch
@@ -10,6 +10,13 @@ import time
 import queue
 import logging
 from collections import namedtuple
+
+# TPU support
+try:
+    import torch_xla.core.xla_model as xm
+    TPU_AVAILABLE = True
+except ImportError:
+    TPU_AVAILABLE = False
 
 import rl_chess.config as config
 from rl_chess.RL_network import ChessNetwork
@@ -77,10 +84,21 @@ class InferenceServer(multiprocessing.Process):
             ]
         )
         
-        device = torch.device(config.TRAINING_DEVICE) # Инференс крутим там же где и тренировку, на мощной GPU
-        logging.info(f"🚀 Inference Server запущен на {device}. Ожидание запросов...")
+        # Определяем устройство (TPU > CUDA > CPU)
+        if TPU_AVAILABLE:
+            device = xm.xla_device()
+            device_type = 'tpu'
+            logging.info(f"🚀 Inference Server запущен на TPU: {device}")
+        elif torch.cuda.is_available():
+            device = torch.device('cuda')
+            device_type = 'cuda'
+            logging.info(f"🚀 Inference Server запущен на CUDA: {torch.cuda.get_device_name(0)}")
+        else:
+            device = torch.device('cpu')
+            device_type = 'cpu'
+            logging.info("🚀 Inference Server запущен на CPU")
 
-        # Инициализация модели на GPU
+        # Инициализация модели
         model = ChessNetwork().to(device)
         model.eval()
         
@@ -91,8 +109,8 @@ class InferenceServer(multiprocessing.Process):
         else:
             logging.warning("Внимание: Входная модель не передана, используются случайные веса!")
 
-        # Подготовка к AMP (Mixed Precision)
-        use_amp = (device.type == 'cuda')
+        # Подготовка к AMP (Mixed Precision) - только для CUDA
+        use_amp = (device_type == 'cuda')
         dtype = torch.float16 if use_amp else torch.float32
         if use_amp and torch.cuda.is_bf16_supported():
             dtype = torch.bfloat16
@@ -165,8 +183,15 @@ class InferenceServer(multiprocessing.Process):
             
             # 3. Инференс
             with torch.no_grad():
-                with torch.autocast(device_type=device.type, dtype=dtype, enabled=use_amp):
+                if use_amp:
+                    with torch.autocast(device_type='cuda', dtype=dtype):
+                        log_policies, values = model(full_batch)
+                else:
                     log_policies, values = model(full_batch)
+            
+            # TPU синхронизация
+            if device_type == 'tpu' and TPU_AVAILABLE:
+                xm.mark_step()
             
             # Переводим в float32 и на CPU для отправки
             log_policies = log_policies.float().cpu()

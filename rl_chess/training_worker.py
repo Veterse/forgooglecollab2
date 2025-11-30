@@ -3,9 +3,7 @@
 Процесс-тренер (Training Worker).
 
 Этот процесс отвечает за непрерывное обучение нейронной сети.
-Он запрашивает батчи данных у ReplayBufferServer, выполняет шаги
-оптимизации на GPU и периодически отправляет обновленные веса
-модели в ModelServer.
+Поддерживает TPU, CUDA и CPU.
 """
 import multiprocessing
 import torch
@@ -17,6 +15,13 @@ import os
 from torch.utils.data import DataLoader, TensorDataset
 from torch.nn import MSELoss, CrossEntropyLoss
 from torch.cuda.amp import autocast, GradScaler
+
+# TPU support
+try:
+    import torch_xla.core.xla_model as xm
+    TPU_AVAILABLE = True
+except ImportError:
+    TPU_AVAILABLE = False
 
 import rl_chess.config as config
 from rl_chess.RL_network import ChessNetwork
@@ -48,21 +53,27 @@ class TrainingWorker(multiprocessing.Process):
         Основной цикл жизни процесса.
         """
         setup_worker_logging()
-        device = torch.device(config.TRAINING_DEVICE)
+        
+        # Определяем устройство (TPU > CUDA > CPU)
+        if TPU_AVAILABLE:
+            device = xm.xla_device()
+            self.device_type = 'tpu'
+            logging.info(f"🚀 Training Worker запущен на TPU: {device}")
+        elif torch.cuda.is_available():
+            device = torch.device('cuda')
+            self.device_type = 'cuda'
+            logging.info(f"🚀 Training Worker запущен на CUDA: {torch.cuda.get_device_name(0)}")
+        else:
+            device = torch.device('cpu')
+            self.device_type = 'cpu'
+            logging.info("🚀 Training Worker запущен на CPU")
+        
+        self.device = device
         self.model.to(device)
 
-        # <<< НАЧАЛО ИЗМЕНЕНИЙ
-        # ОТКЛЮЧАЕМ Mixed Precision, так как она ломает обучение Policy Head
-        # use_bfloat16 = (device.type == 'cuda' and torch.cuda.is_bf16_supported())
-        use_bfloat16 = False
-        
-        # GradScaler нужен для float16, но безопасен и для bfloat16 (хотя и менее критичен)
-        # self.scaler = GradScaler(enabled=use_bfloat16)
-        self.scaler = None # Отключаем scaler
-        
-        log_message = f"🚀 Процесс запущен на [{device}]. "
-        log_message += "Смешанная точность: Выключена (используется float32) [FORCED FIX]"
-        logging.info(log_message)
+        # Mixed Precision отключена для стабильности
+        self.scaler = None
+        logging.info("Смешанная точность: Выключена (float32)")
         # <<< КОНЕЦ ИЗМЕНЕНИЙ
 
         # Отслеживаем сколько данных было при последнем обучении
@@ -184,7 +195,13 @@ class TrainingWorker(multiprocessing.Process):
         # self.scaler.update()
         
         loss.backward()
-        self.optimizer.step()
+        
+        # TPU-специфичный optimizer step
+        if self.device_type == 'tpu' and TPU_AVAILABLE:
+            xm.optimizer_step(self.optimizer)
+            xm.mark_step()
+        else:
+            self.optimizer.step()
         
         self.scheduler.step()
         

@@ -9,6 +9,13 @@ from . import config
 from .RL_network import board_to_tensor, ChessNetwork
 from .RL_utils import move_to_index
 
+# TPU support
+try:
+    import torch_xla.core.xla_model as xm
+    TPU_AVAILABLE = True
+except ImportError:
+    TPU_AVAILABLE = False
+
 # Устанавливаем логгер
 logger = logging.getLogger(__name__)
 
@@ -92,10 +99,24 @@ class MCTSAgent:
 
     def _local_predict(self, tensors):
         """Локальный предсказатель для совместимости с обычным режимом."""
-        # Определяем, нужно ли использовать autocast (bfloat16 на CUDA)
-        use_amp = True if self.device.type == 'cuda' else False 
-        with torch.no_grad(), torch.autocast(device_type=self.device.type, dtype=torch.bfloat16, enabled=use_amp):
-            log_policies, values = self.model(tensors)
+        # Определяем тип устройства
+        device_type = str(self.device.type) if hasattr(self.device, 'type') else str(self.device)
+        is_cuda = 'cuda' in device_type
+        is_tpu = 'xla' in device_type
+        
+        # Autocast только для CUDA
+        use_amp = is_cuda
+        
+        with torch.no_grad():
+            if use_amp:
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    log_policies, values = self.model(tensors)
+            else:
+                log_policies, values = self.model(tensors)
+        
+        # TPU синхронизация
+        if is_tpu and TPU_AVAILABLE:
+            xm.mark_step()
         
         # Приводим к float32 перед переходом в NumPy
         return log_policies.float(), values.float()
