@@ -84,6 +84,15 @@ class InferenceServer(multiprocessing.Process):
             ]
         )
         
+        try:
+            self._run_server()
+        except Exception as e:
+            logging.error(f"❌ InferenceServer CRASHED: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            raise
+    
+    def _run_server(self):
         # ПРИНУДИТЕЛЬНО CPU (TPU на Colab не работает с multiprocessing)
         device = torch.device('cpu')
         device_type = 'cpu'
