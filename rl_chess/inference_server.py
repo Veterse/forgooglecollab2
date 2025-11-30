@@ -66,7 +66,7 @@ class InferenceServer(multiprocessing.Process):
         self.output_queues = output_queues
         self.shared_inference_buffer = shared_inference_buffer
         self.name = "InferenceServer"
-        self.daemon = True # Чтобы процесс умирал вместе с главным
+        self.daemon = False  # НЕ daemon чтобы видеть ошибки
         self.stop_event = multiprocessing.Event()
 
     def set_model(self, model):
@@ -74,6 +74,10 @@ class InferenceServer(multiprocessing.Process):
         self.input_model = model
 
     def run(self):
+        # СРАЗУ пишем в stdout чтобы точно увидеть
+        import sys
+        print(">>> InferenceServer.run() STARTED", file=sys.stderr, flush=True)
+        
         # Настройка логирования
         logging.basicConfig(
             level=logging.INFO,
@@ -87,9 +91,12 @@ class InferenceServer(multiprocessing.Process):
         try:
             self._run_server()
         except Exception as e:
+            print(f">>> InferenceServer CRASHED: {e}", file=sys.stderr, flush=True)
             logging.error(f"❌ InferenceServer CRASHED: {e}")
             import traceback
-            logging.error(traceback.format_exc())
+            tb = traceback.format_exc()
+            print(tb, file=sys.stderr, flush=True)
+            logging.error(tb)
             raise
     
     def _run_server(self):
