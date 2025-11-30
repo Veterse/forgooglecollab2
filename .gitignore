@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+env/
+venv/
+.venv/
+
+# PyTorch checkpoints (большие файлы)
+*.pth
+*.pt
+
+# Logs
+*.log
+*.txt
+!requirements.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+backups/
+
+# HTML output
+*.html
