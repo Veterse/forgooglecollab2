@@ -115,13 +115,9 @@ class InferenceServer(multiprocessing.Process):
         print(">>> _run_server: model created", file=sys.stderr, flush=True)
         model.eval()
         
-        # Первоначальная синхронизация весов
-        if self.input_model:
-            print(">>> _run_server: loading weights from shared memory...", file=sys.stderr, flush=True)
-            model.load_state_dict(self.input_model.state_dict())
-            logging.info("Веса модели загружены из shared memory.")
-        else:
-            logging.warning("Внимание: Входная модель не передана, используются случайные веса!")
+        # ПРОПУСКАЕМ синхронизацию весов при старте - shared memory зависает на Colab
+        # Веса синхронизируются позже в основном цикле
+        logging.info("Используются начальные веса модели (синхронизация позже)")
         
         print(">>> _run_server: entering main loop", file=sys.stderr, flush=True)
 
@@ -169,12 +165,7 @@ class InferenceServer(multiprocessing.Process):
                         break
             
             if not requests_buffer:
-                # Если работы нет, проверим не пора ли обновить веса
-                if time.time() - last_sync_time > SYNC_INTERVAL:
-                    if self.input_model:
-                        # Загружаем веса из разделяемой памяти (это быстро, т.к. копирование из RAM в VRAM)
-                        model.load_state_dict(self.input_model.state_dict())
-                    last_sync_time = time.time()
+                # Просто ждём запросы (синхронизация весов отключена - зависает на Colab)
                 continue
 
             # 2. Подготовка данных
@@ -223,9 +214,4 @@ class InferenceServer(multiprocessing.Process):
                 self.output_queues[worker_id].put((worker_policy, worker_value))
             
             requests_buffer.clear()
-
-            # Периодическая синхронизация весов (даже если идет активная работа)
-            if time.time() - last_sync_time > SYNC_INTERVAL:
-                if self.input_model:
-                    model.load_state_dict(self.input_model.state_dict())
-                last_sync_time = time.time()
+            # Синхронизация весов отключена - зависает на Colab с multiprocessing
