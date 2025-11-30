@@ -8,12 +8,16 @@ import torch
 
 # --- Определение устройства (TPU/CUDA/CPU) ---
 def get_device():
-    """Определяет лучшее доступное устройство."""
+    """Определяет лучшее доступное устройство. Вызывать лениво, не при импорте!"""
     # Пробуем TPU
     try:
         import torch_xla.core.xla_model as xm
-        return xm.xla_device(), 'tpu'
-    except ImportError:
+        device = xm.xla_device()
+        return device, 'tpu'
+    except (ImportError, RuntimeError):
+        # RuntimeError если TPU занят или недоступен
+        pass
+    except Exception:
         pass
     
     # Пробуем CUDA
@@ -23,7 +27,10 @@ def get_device():
     # Fallback на CPU
     return torch.device('cpu'), 'cpu'
 
-DEVICE, DEVICE_TYPE = get_device()
+# НЕ вызываем get_device() при импорте — это вызовет ошибку если TPU занят
+# Каждый процесс должен вызвать get_device() сам когда будет готов
+DEVICE = None  # Будет установлено при первом использовании
+DEVICE_TYPE = None
 
 # --- Представление состояния ---
 BOARD_HISTORY_LENGTH = 8  # Сколько последних позиций подаем сети
@@ -71,5 +78,6 @@ SAVE_EVERY_N_GAMES = 5
 BACKUP_DIR = "backups"
 
 # --- Устройства (для совместимости со старым кодом) ---
-TRAINING_DEVICE = DEVICE
-SELF_PLAY_DEVICE = DEVICE
+# Эти значения устанавливаются динамически при запуске
+TRAINING_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+SELF_PLAY_DEVICE = 'cpu'  # Self-play воркеры всегда на CPU

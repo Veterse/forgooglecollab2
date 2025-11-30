@@ -144,10 +144,16 @@ def main():
 
     # Определяем устройство (TPU > CUDA > CPU)
     if TPU_AVAILABLE:
-        device = xm.xla_device()
-        device_type = 'tpu'
-        logging.info(f"✅ TPU доступен: {device}")
-    elif torch.cuda.is_available():
+        try:
+            device = xm.xla_device()
+            device_type = 'tpu'
+            logging.info(f"✅ TPU доступен: {device}")
+        except RuntimeError as e:
+            logging.warning(f"⚠️ TPU недоступен: {e}")
+            TPU_AVAILABLE = False
+            # Продолжаем проверку CUDA/CPU ниже
+    
+    if not TPU_AVAILABLE and torch.cuda.is_available():
         device = torch.device('cuda')
         device_type = 'cuda'
         logging.info(f"✅ CUDA доступен: {torch.cuda.get_device_name(0)}")
@@ -161,7 +167,7 @@ def main():
             torch.backends.cuda.matmul.allow_tf32 = True
         if hasattr(torch.backends.cudnn, "allow_tf32"):
             torch.backends.cudnn.allow_tf32 = True
-    else:
+    elif not TPU_AVAILABLE:
         device = torch.device('cpu')
         device_type = 'cpu'
         logging.info("⚠️ Используется CPU")
