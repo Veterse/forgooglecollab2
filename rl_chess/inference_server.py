@@ -100,21 +100,30 @@ class InferenceServer(multiprocessing.Process):
             raise
     
     def _run_server(self):
+        import sys
+        print(">>> _run_server: START", file=sys.stderr, flush=True)
+        
         # ПРИНУДИТЕЛЬНО CPU (TPU на Colab не работает с multiprocessing)
         device = torch.device('cpu')
         device_type = 'cpu'
+        print(">>> _run_server: device created", file=sys.stderr, flush=True)
         logging.info("🚀 Inference Server запущен на CPU (принудительно)")
 
         # Инициализация модели
+        print(">>> _run_server: creating model...", file=sys.stderr, flush=True)
         model = ChessNetwork().to(device)
+        print(">>> _run_server: model created", file=sys.stderr, flush=True)
         model.eval()
         
         # Первоначальная синхронизация весов
         if self.input_model:
+            print(">>> _run_server: loading weights from shared memory...", file=sys.stderr, flush=True)
             model.load_state_dict(self.input_model.state_dict())
             logging.info("Веса модели загружены из shared memory.")
         else:
             logging.warning("Внимание: Входная модель не передана, используются случайные веса!")
+        
+        print(">>> _run_server: entering main loop", file=sys.stderr, flush=True)
 
         # Подготовка к AMP (Mixed Precision) - только для CUDA
         use_amp = (device_type == 'cuda')
