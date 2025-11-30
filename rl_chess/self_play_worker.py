@@ -41,6 +41,16 @@ class SelfPlayWorker(multiprocessing.Process):
         """
         Основной цикл рабочего процесса.
         """
+        import numpy as np
+        import random
+        import os
+        
+        # ВАЖНО: Уникальный seed для каждого воркера!
+        # Иначе все воркеры будут генерировать одинаковый шум Дирихле
+        unique_seed = os.getpid() + self.worker_id + int(time.time() * 1000) % 10000
+        np.random.seed(unique_seed)
+        random.seed(unique_seed)
+        
         setup_worker_logging() # Настраиваем основной лог
         # Создаем логгер для live-апдейтов ВНУТРИ дочернего процесса
         self.logger = get_live_logger('live_updates.log', f"Player-{self.worker_id}")
