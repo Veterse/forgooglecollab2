@@ -54,27 +54,15 @@ class TrainingWorker(multiprocessing.Process):
         """
         setup_worker_logging()
         
-        # Определяем устройство (TPU > CUDA > CPU)
-        if TPU_AVAILABLE:
-            device = xm.xla_device()
-            self.device_type = 'tpu'
-            logging.info(f"🚀 Training Worker запущен на TPU: {device}")
-        elif torch.cuda.is_available():
-            device = torch.device('cuda')
-            self.device_type = 'cuda'
-            logging.info(f"🚀 Training Worker запущен на CUDA: {torch.cuda.get_device_name(0)}")
-        else:
-            device = torch.device('cpu')
-            self.device_type = 'cpu'
-            logging.info("🚀 Training Worker запущен на CPU")
+        # ПРИНУДИТЕЛЬНО CPU (TPU на Colab не работает с multiprocessing)
+        device = torch.device('cpu')
+        self.device_type = 'cpu'
+        logging.info("🚀 Training Worker запущен на CPU (принудительно)")
         
         self.device = device
         self.model.to(device)
 
-        # Mixed Precision отключена для стабильности
-        self.scaler = None
         logging.info("Смешанная точность: Выключена (float32)")
-        # <<< КОНЕЦ ИЗМЕНЕНИЙ
 
         # Отслеживаем сколько данных было при последнем обучении
         last_trained_buffer_size = 0
@@ -111,11 +99,7 @@ class TrainingWorker(multiprocessing.Process):
                 last_log_time = time.time()
             
             batch = self.replay_buffer.sample(config.TRAIN_BATCH_SIZE)
-
-            # <<< ИЗМЕНЕНИЕ ЗДЕСЬ
-            # Передаем флаг use_bfloat16 в метод update_network
-            self.update_network(batch, device, use_bfloat16)
-            # <<< КОНЕЦ ИЗМЕНЕНИЯ
+            self.update_network(batch, device)
             
             # Обновляем счётчик после успешного обучения
             last_trained_buffer_size = current_buffer_size
@@ -161,31 +145,13 @@ class TrainingWorker(multiprocessing.Process):
             if os.path.exists(temp_checkpoint_path):
                 os.remove(temp_checkpoint_path)
 
-    def update_network(self, batch, device, use_bfloat16):
+    def update_network(self, batch, device):
         """
-        Выполняет один шаг обновления весов общей модели, блокируя ее на время обновления.
+        Выполняет один шаг обновления весов общей модели.
         """
         self.model.train()
         
         states, policy_targets, value_targets = batch
-        
-        # TPU ФИКС: Убеждаемся что batch size фиксированный
-        # TPU компилирует граф под конкретный размер
-        actual_size = states.shape[0]
-        expected_size = config.TRAIN_BATCH_SIZE
-        
-        if self.device_type == 'tpu' and actual_size != expected_size:
-            # Паддим или обрезаем до фиксированного размера
-            if actual_size < expected_size:
-                pad_size = expected_size - actual_size
-                states = torch.cat([states, torch.zeros(pad_size, *states.shape[1:])])
-                policy_targets = torch.cat([policy_targets, torch.zeros(pad_size, *policy_targets.shape[1:])])
-                value_targets = torch.cat([value_targets, torch.zeros(pad_size)])
-            else:
-                states = states[:expected_size]
-                policy_targets = policy_targets[:expected_size]
-                value_targets = value_targets[:expected_size]
-        
         states = states.to(device)
         policy_targets = policy_targets.to(device)
         value_targets = value_targets.to(device)
@@ -212,13 +178,7 @@ class TrainingWorker(multiprocessing.Process):
         # self.scaler.update()
         
         loss.backward()
-        
-        # TPU-специфичный optimizer step
-        if self.device_type == 'tpu' and TPU_AVAILABLE:
-            xm.optimizer_step(self.optimizer)
-            xm.mark_step()
-        else:
-            self.optimizer.step()
+        self.optimizer.step()
         
         self.scheduler.step()
         

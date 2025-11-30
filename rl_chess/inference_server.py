@@ -84,19 +84,10 @@ class InferenceServer(multiprocessing.Process):
             ]
         )
         
-        # Определяем устройство (TPU > CUDA > CPU)
-        if TPU_AVAILABLE:
-            device = xm.xla_device()
-            device_type = 'tpu'
-            logging.info(f"🚀 Inference Server запущен на TPU: {device}")
-        elif torch.cuda.is_available():
-            device = torch.device('cuda')
-            device_type = 'cuda'
-            logging.info(f"🚀 Inference Server запущен на CUDA: {torch.cuda.get_device_name(0)}")
-        else:
-            device = torch.device('cpu')
-            device_type = 'cpu'
-            logging.info("🚀 Inference Server запущен на CPU")
+        # ПРИНУДИТЕЛЬНО CPU (TPU на Colab не работает с multiprocessing)
+        device = torch.device('cpu')
+        device_type = 'cpu'
+        logging.info("🚀 Inference Server запущен на CPU (принудительно)")
 
         # Инициализация модели
         model = ChessNetwork().to(device)
@@ -179,17 +170,7 @@ class InferenceServer(multiprocessing.Process):
             full_batch = torch.cat(all_tensors)
             actual_batch_size = full_batch.shape[0]
             
-            # TPU ФИКС: Паддинг до фиксированного размера чтобы избежать перекомпиляции
-            # TPU компилирует граф под конкретный размер, динамические размеры = вечная перекомпиляция
-            FIXED_BATCH_SIZE = config.INFERENCE_BATCH_SIZE  # Фиксированный размер для TPU
-            
-            if device_type == 'tpu' and actual_batch_size < FIXED_BATCH_SIZE:
-                # Паддим нулями до фиксированного размера
-                padding_size = FIXED_BATCH_SIZE - actual_batch_size
-                padding = torch.zeros(padding_size, *full_batch.shape[1:], dtype=full_batch.dtype)
-                full_batch = torch.cat([full_batch, padding])
-            
-            full_batch = full_batch.to(device, non_blocking=True)
+            full_batch = full_batch.to(device)
             
             # 3. Инференс
             with torch.no_grad():
@@ -199,13 +180,9 @@ class InferenceServer(multiprocessing.Process):
                 else:
                     log_policies, values = model(full_batch)
             
-            # TPU синхронизация
-            if device_type == 'tpu' and TPU_AVAILABLE:
-                xm.mark_step()
-            
-            # Убираем padding перед отправкой
-            log_policies = log_policies[:actual_batch_size].float().cpu()
-            values = values[:actual_batch_size].float().cpu()
+            # Результаты уже на CPU
+            log_policies = log_policies[:actual_batch_size].float()
+            values = values[:actual_batch_size].float()
             
             # 4. Рассылка ответов
             current_idx = 0

@@ -142,37 +142,10 @@ def main():
     
     replay_buffer = SharedReplayBuffer(config.MAX_REPLAY_BUFFER_SIZE)
 
-    # Определяем устройство (TPU > CUDA > CPU)
-    global TPU_AVAILABLE  # Нужно для изменения глобальной переменной
-    
-    tpu_ok = False
-    if TPU_AVAILABLE:
-        try:
-            device = xm.xla_device()
-            device_type = 'tpu'
-            tpu_ok = True
-            logging.info(f"✅ TPU доступен: {device}")
-        except RuntimeError as e:
-            logging.warning(f"⚠️ TPU недоступен: {e}")
-    
-    if not tpu_ok and torch.cuda.is_available():
-        device = torch.device('cuda')
-        device_type = 'cuda'
-        logging.info(f"✅ CUDA доступен: {torch.cuda.get_device_name(0)}")
-        # CUDA оптимизации
-        torch.backends.cudnn.benchmark = True
-        try:
-            torch.set_float32_matmul_precision("high")
-        except AttributeError:
-            pass
-        if hasattr(torch.backends.cuda, "matmul"):
-            torch.backends.cuda.matmul.allow_tf32 = True
-        if hasattr(torch.backends.cudnn, "allow_tf32"):
-            torch.backends.cudnn.allow_tf32 = True
-    elif not tpu_ok:
-        device = torch.device('cpu')
-        device_type = 'cpu'
-        logging.info("⚠️ Используется CPU")
+    # ПРИНУДИТЕЛЬНО CPU (TPU на Colab не работает с multiprocessing)
+    device = torch.device('cpu')
+    device_type = 'cpu'
+    logging.info("✅ Используется CPU (принудительно для совместимости с multiprocessing)")
 
     model = ChessNetwork()
     
